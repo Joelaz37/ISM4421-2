@@ -53,7 +53,7 @@
   .row-label { display: flex; justify-content: space-between; align-items: baseline; }
   .count { font-size: 12px; color: var(--muted); font-weight: 400; }
   .count.over { color: var(--err); }
-  input[type=text], input[type=password], textarea, select {
+  input[type=text], input[type=password], input[type=email], textarea, select {
     width: 100%; background: var(--panel-2); color: var(--text); border: 1px solid var(--border);
     border-radius: 10px; padding: 10px 12px; font: inherit; outline: none;
   }
@@ -127,6 +127,19 @@
   footer { margin-top: 32px; text-align: center; font-size: 12px; color: var(--muted); }
   .spinner { width: 14px; height: 14px; border: 2px solid rgba(255,255,255,.4); border-top-color: #fff; border-radius: 50%; animation: spin .8s linear infinite; }
   @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* ---------- auth ---------- */
+  .header-right { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .user-chip { font-size: 13px; color: var(--muted); max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .auth-wrap { min-height: calc(100vh - 160px); display: grid; place-items: center; }
+  .auth-card { width: 100%; max-width: 400px; }
+  .auth-card h2 { text-transform: none; letter-spacing: -.01em; color: var(--text); font-size: 22px; margin: 0 0 4px; }
+  .auth-card .sub { color: var(--muted); font-size: 14px; margin: 0 0 8px; }
+  .auth-links { display: flex; justify-content: space-between; gap: 10px; margin-top: 14px; font-size: 13px; flex-wrap: wrap; }
+  .link { background: none; border: 0; padding: 0; color: #c4b5fd; font: inherit; cursor: pointer; text-decoration: underline; text-underline-offset: 2px; }
+  .notice { margin-top: 12px; padding: 10px 12px; border-radius: 10px; background: rgba(34,197,94,.12); color: #86efac; font-size: 13px; display: none; }
+  .notice.show { display: block; }
+  .boot { color: var(--muted); text-align: center; padding: 80px 0; }
 </style>
 </head>
 <body>
@@ -136,8 +149,45 @@
       <div class="logo">🎵</div>
       <h1>Songsmith</h1>
     </div>
-    <div class="credits" id="credits" hidden>Credits: <b>…</b></div>
+    <div class="header-right">
+      <div class="credits" id="credits" hidden>Credits: <b>…</b></div>
+      <span class="user-chip" id="userEmail" hidden></span>
+      <button class="btn ghost" type="button" id="signOut" hidden>Sign out</button>
+    </div>
   </header>
+
+  <div class="boot" id="bootView">Loading…</div>
+
+  <!-- ============ AUTH ============ -->
+  <div class="auth-wrap" id="authView" hidden>
+    <section class="card auth-card">
+      <form id="authForm" autocomplete="on" novalidate>
+        <h2 id="authTitle">Sign in</h2>
+        <p class="sub" id="authSub">Welcome back. Sign in to make music.</p>
+
+        <div id="emailField">
+          <label for="authEmail">Email</label>
+          <input type="email" id="authEmail" autocomplete="email" placeholder="you@example.com" required />
+        </div>
+        <div id="passwordField">
+          <label for="authPassword" id="authPasswordLabel">Password</label>
+          <input type="password" id="authPassword" autocomplete="current-password" placeholder="At least 6 characters" minlength="6" required />
+        </div>
+
+        <button class="btn block" type="submit" id="authSubmit">Sign in</button>
+        <div class="error" id="authError"></div>
+        <div class="notice" id="authNotice"></div>
+
+        <div class="auth-links">
+          <button type="button" class="link" id="toggleSignUp">Create an account</button>
+          <button type="button" class="link" id="toForgot">Forgot password?</button>
+        </div>
+      </form>
+    </section>
+  </div>
+
+  <!-- ============ APP ============ -->
+  <div id="appView" hidden>
 
   <section class="card key-panel" id="keyPanel">
     <form id="keyForm" class="key-row">
@@ -255,14 +305,22 @@
     </section>
   </div>
 
+  </div><!-- /appView -->
+
   <footer>Powered by the Suno API · Audio links expire after ~15 days, download what you want to keep.</footer>
 </div>
 
+<script src="vendor/supabase-2.117.2.js"></script>
 <script>
-(() => {
+// Supabase project "4421". The publishable key is safe to ship in the browser.
+const SUPABASE_URL = "https://cjgmskizuwwvtjsahzbv.supabase.co";
+const SUPABASE_KEY = "sb_publishable_xmtG8daxzfi-T6JmwE9dWA_VkAmljNU";
+
+// Starts the music app for a signed-in user. History and Suno key are stored per user.
+function startSongsmith(user) {
   const $ = (s, el = document) => el.querySelector(s);
   const $$ = (s, el = document) => [...el.querySelectorAll(s)];
-  const STORE_KEY = "songsmith.tasks.v1";
+  const STORE_KEY = `songsmith.tasks.v1.${user.id}`;
   const POLL_MS = 5000;
   const MAX_POLL_MS = 10 * 60 * 1000;
   const FAILED = ["CREATE_TASK_FAILED", "GENERATE_AUDIO_FAILED", "CALLBACK_EXCEPTION", "SENSITIVE_WORD_ERROR"];
@@ -290,7 +348,17 @@
   }
 
   // ---------- api key (stored only in this browser) ----------
-  const KEY_STORE = "songsmith.apiKey";
+  const KEY_STORE = `songsmith.apiKey.${user.id}`;
+
+  // One-time move of data saved before login existed into this user's space.
+  try {
+    for (const [oldK, newK] of [["songsmith.tasks.v1", STORE_KEY], ["songsmith.apiKey", KEY_STORE]]) {
+      const v = localStorage.getItem(oldK);
+      if (v !== null && localStorage.getItem(newK) === null) localStorage.setItem(newK, v);
+      localStorage.removeItem(oldK);
+    }
+    tasks = load();
+  } catch {}
   function getKey() { try { return localStorage.getItem(KEY_STORE) || ""; } catch { return ""; } }
   function setKey(k) { try { k ? localStorage.setItem(KEY_STORE, k) : localStorage.removeItem(KEY_STORE); } catch {} }
 
@@ -655,6 +723,125 @@
   tasks.filter(t => t.status !== "SUCCESS" && !FAILED.includes(t.status) && t.status !== "POLL_ERROR").forEach(t => {
     if (Date.now() - t.createdAt > MAX_POLL_MS) { t.status = "POLL_ERROR"; t.error = "Timed out waiting for results."; save(); renderTask(t); }
     else poll(t);
+  });
+}
+
+// ---------- auth ----------
+(() => {
+  const $ = s => document.querySelector(s);
+  const sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+  const siteUrl = location.origin + location.pathname;
+  let view = "signin"; // signin | signup | forgot | reset
+  let started = false;
+
+  // Errors Supabase puts in the URL, e.g. an expired confirmation link.
+  const hashParams = new URLSearchParams(location.hash.slice(1));
+  const urlError = hashParams.get("error_description") || new URLSearchParams(location.search).get("error_description");
+  if (urlError) history.replaceState(null, "", location.pathname);
+
+  const COPY = {
+    signin: ["Sign in", "Welcome back. Sign in to make music.", "Sign in"],
+    signup: ["Create your account", "Sign up with your email to start making music.", "Create account"],
+    forgot: ["Reset your password", "We'll email you a link to set a new password.", "Send reset link"],
+    reset: ["Set a new password", "Choose a new password for your account.", "Update password"],
+  };
+
+  function msg(error, notice) {
+    $("#authError").textContent = error || ""; $("#authError").classList.toggle("show", !!error);
+    $("#authNotice").textContent = notice || ""; $("#authNotice").classList.toggle("show", !!notice);
+  }
+
+  function setView(v) {
+    view = v;
+    const [title, sub, cta] = COPY[v];
+    $("#authTitle").textContent = title; $("#authSub").textContent = sub; $("#authSubmit").textContent = cta;
+    $("#emailField").hidden = v === "reset";
+    $("#passwordField").hidden = v === "forgot";
+    $("#authPasswordLabel").textContent = v === "reset" ? "New password" : "Password";
+    $("#authPassword").autocomplete = v === "signin" ? "current-password" : "new-password";
+    $("#toggleSignUp").textContent = v === "signin" ? "Create an account" : "Back to sign in";
+    $("#toggleSignUp").hidden = v === "reset";
+    $("#toForgot").hidden = v !== "signin";
+    msg("");
+  }
+  $("#toggleSignUp").onclick = () => setView(view === "signin" ? "signup" : "signin");
+  $("#toForgot").onclick = () => setView("forgot");
+
+  function showAuth(v) {
+    $("#bootView").hidden = true; $("#appView").hidden = true; $("#authView").hidden = false;
+    $("#userEmail").hidden = true; $("#signOut").hidden = true;
+    setView(v);
+  }
+  function showApp(user) {
+    $("#bootView").hidden = true; $("#authView").hidden = true; $("#appView").hidden = false;
+    $("#userEmail").textContent = user.email; $("#userEmail").hidden = false; $("#signOut").hidden = false;
+    if (!started) { started = true; startSongsmith(user); }
+  }
+
+  function friendly(err) {
+    const m = err?.message || String(err);
+    if (/invalid login credentials/i.test(m)) return "Wrong email or password.";
+    if (/email not confirmed/i.test(m)) return "Please confirm your email first. Check your inbox for the link.";
+    if (/rate limit/i.test(m)) return "Too many emails sent recently. Please wait a bit and try again.";
+    return m;
+  }
+
+  $("#authForm").addEventListener("submit", async e => {
+    e.preventDefault(); msg("");
+    const email = $("#authEmail").value.trim();
+    const password = $("#authPassword").value;
+    if (view !== "reset" && !/^\S+@\S+\.\S+$/.test(email)) return msg("Enter a valid email address.");
+    if (view !== "forgot" && password.length < 6) return msg("Password must be at least 6 characters.");
+
+    const btn = $("#authSubmit"), label = btn.textContent;
+    btn.disabled = true; btn.innerHTML = '<span class="spinner"></span> Please wait…';
+    try {
+      if (view === "signin") {
+        const { error } = await sb.auth.signInWithPassword({ email, password });
+        if (error) throw error;
+      } else if (view === "signup") {
+        const { data, error } = await sb.auth.signUp({ email, password, options: { emailRedirectTo: siteUrl } });
+        if (error) throw error;
+        if (data.user && Array.isArray(data.user.identities) && data.user.identities.length === 0) {
+          setView("signin"); msg("", "That email already has an account. Sign in, or reset your password.");
+        } else if (!data.session) {
+          setView("signin"); $("#authEmail").value = email;
+          msg("", `Almost done! We sent a confirmation link to ${email}. Click it, then sign in here.`);
+        }
+      } else if (view === "forgot") {
+        const { error } = await sb.auth.resetPasswordForEmail(email, { redirectTo: siteUrl });
+        if (error) throw error;
+        msg("", `If an account exists for ${email}, a reset link is on its way.`);
+      } else if (view === "reset") {
+        const { error } = await sb.auth.updateUser({ password });
+        if (error) throw error;
+        $("#authPassword").value = "";
+        const { data } = await sb.auth.getSession();
+        if (data.session) showApp(data.session.user);
+      }
+    } catch (err) {
+      msg(friendly(err));
+    } finally {
+      btn.disabled = false; btn.textContent = label;
+    }
+  });
+
+  $("#signOut").onclick = async () => {
+    await sb.auth.signOut();
+    location.reload(); // clears the previous user's in-memory state and timers
+  };
+
+  sb.auth.onAuthStateChange((event, session) => {
+    // Supabase calls listeners synchronously; defer UI work.
+    setTimeout(() => {
+      if (event === "PASSWORD_RECOVERY") return showAuth("reset");
+      if (view === "reset" && session) return; // stay on the new-password form
+      if (session?.user) showApp(session.user);
+      else if (event === "SIGNED_OUT" || event === "INITIAL_SESSION") {
+        showAuth("signin");
+        if (urlError) msg(/expired|invalid/i.test(urlError) ? "That email link is invalid or has expired. Request a new one." : urlError);
+      }
+    }, 0);
   });
 })();
 </script>
