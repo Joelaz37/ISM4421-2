@@ -7,7 +7,8 @@ A single-page app that generates music with the [Suno API](https://docs.sunoapi.
 - **Custom mode**: set your own title, style tags and lyrics, with a ✨ lyrics generator.
 - Instrumental toggle and model picker (V3.5 → V5).
 - Advanced options: exclude styles, vocal gender, style weight, weirdness.
-- Live progress, stream preview, MP3 download, cover art and lyrics view.
+- Live progress, built-in player with seek bar, stream preview, MP3 download, cover art and lyrics view.
+- Frosted-glass UI: two-column studio on desktop, stacked sheets with a docked player on mobile, automatic dark mode.
 - Credit balance display and track history saved in the browser.
 
 ## Login
