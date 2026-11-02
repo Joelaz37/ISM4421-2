@@ -331,6 +331,10 @@
 
 <script src="vendor/supabase-2.117.2.js"></script>
 <script>
+// Backup: if the bundled copy didn't load (e.g. the page was opened outside the site), use the CDN.
+window.supabase || document.write('<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.2/dist/umd/supabase.js"><\/script>');
+</script>
+<script>
 // Supabase project "New". The publishable key is safe to ship in the browser.
 const SUPABASE_URL = "https://bgcpvsdafecjvtqkjnmy.supabase.co";
 const SUPABASE_KEY = "sb_publishable_lNqpllOWMT4wJScCMQ7_cg_5CzwNVkp";
@@ -748,7 +752,10 @@ function startSongsmith(user) {
 // ---------- auth ----------
 (() => {
   const $ = s => document.querySelector(s);
-  const sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+  let sb = null;
+  try { sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY); }
+  catch (err) { console.error("Supabase failed to start:", err); }
+  const OFFLINE = "Sign-in is unavailable right now. Check your connection and refresh the page.";
   const siteUrl = location.origin + location.pathname;
   let view = "signin"; // signin | signup | forgot | reset
   let started = false;
@@ -789,6 +796,7 @@ function startSongsmith(user) {
 
   $("#googleBtn").onclick = async () => {
     msg("");
+    if (!sb) return msg(OFFLINE);
     const btn = $("#googleBtn");
     btn.disabled = true;
     const { error } = await sb.auth.signInWithOAuth({ provider: "google", options: { redirectTo: siteUrl } });
@@ -826,6 +834,7 @@ function startSongsmith(user) {
 
   $("#authForm").addEventListener("submit", async e => {
     e.preventDefault(); msg("");
+    if (!sb) return msg(OFFLINE);
     const email = $("#authEmail").value.trim();
     const password = $("#authPassword").value;
     if (view !== "reset" && !/^\S+@\S+\.\S+$/.test(email)) return msg("Enter a valid email address.");
@@ -865,9 +874,13 @@ function startSongsmith(user) {
   });
 
   $("#signOut").onclick = async () => {
-    await sb.auth.signOut();
+    if (sb) await sb.auth.signOut();
     location.reload(); // clears the previous user's in-memory state and timers
   };
+
+  // Never leave people stuck on "Loading…": show the login page if auth can't start.
+  if (!sb) { showAuth("signin"); msg(OFFLINE); return; }
+  setTimeout(() => { if (!$("#bootView").hidden) showAuth("signin"); }, 5000);
 
   sb.auth.onAuthStateChange((event, session) => {
     // Supabase calls listeners synchronously; defer UI work.
